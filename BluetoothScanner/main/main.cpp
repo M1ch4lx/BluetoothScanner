@@ -13,23 +13,23 @@
 #define WIFI_PASS      "masnasiec"
 #define MAX_RETRY      10
 
+#define LED_BUILTIN GPIO_NUM_2
+
 static EventGroupHandle_t wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 static const char *TAG = "esp";
 static int retry_num = 0;
 static int connected = 0;
 
+// Wifi event handler
 static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (retry_num < MAX_RETRY) {
-            esp_wifi_connect();
-            retry_num++;
-            ESP_LOGI(TAG, "Ponowne laczenie...");
-        } else {
-            xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
-        }
+        esp_wifi_connect();
+        retry_num++;
+        ESP_LOGI(TAG, "Ponowne laczenie...");
+        //xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
         ESP_LOGI(TAG, "Polaczenie z Wi-Fi nieudane.");
         connected = 0;
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -56,6 +56,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
             ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
             break;
         case HTTP_EVENT_ON_DATA:
+        	// Print portion of data
             if (evt->data_len > 0) {
                 printf("%.*s", evt->data_len, (char*)evt->data);
             }
@@ -78,13 +79,13 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
 
 void http_get_task(void) {
     esp_http_client_config_t config = {
-        .url = "http://google.com",  // Adres URL serwera
+        .url = "http://google.com",
         .event_handler = _http_event_handler,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
 
-    // Wysyłanie zapytania GET
+    // Send http GET request
     esp_err_t err = esp_http_client_perform(client);
 
     if (err == ESP_OK) {
@@ -96,7 +97,6 @@ void http_get_task(void) {
     esp_http_client_cleanup(client);
 }
 
-// 
 void wifi_init_sta(void) {
     wifi_event_group = xEventGroupCreate();
 
@@ -132,17 +132,39 @@ void wifi_init_sta(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG, "Inicjalizacja Wi-Fi zakonczona.");
-
+	
     EventBits_t bits = xEventGroupWaitBits(wifi_event_group,
             WIFI_CONNECTED_BIT,
             pdFALSE,
             pdFALSE,
             portMAX_DELAY);
-
+	
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Polaczono z siecia Wi-Fi.");
     } else {
         ESP_LOGI(TAG, "Nie udalo się polaczyc z siecia Wi-Fi.");
+    }
+}
+
+void blink_led_task(void *pvParameter) {
+    gpio_reset_pin(LED_BUILTIN);
+    gpio_set_direction(LED_BUILTIN, GPIO_MODE_OUTPUT);
+
+    while (true) {
+        if (connected) {
+			// Turn LED ON
+            gpio_set_level(LED_BUILTIN, 0);
+            ESP_LOGI(TAG, "Polaczono");
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+        } else {
+			// LED blinking
+            gpio_set_level(LED_BUILTIN, 1);
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+            ESP_LOGI(TAG, "Brak polaczenia");
+            gpio_set_level(LED_BUILTIN, 0);
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+            ESP_LOGI(TAG, "Brak polaczenia");
+        }
     }
 }
 
@@ -154,6 +176,8 @@ extern "C" void app_main(void) {
       ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    
+    xTaskCreate(blink_led_task, "blink_led_task", 2048, NULL, 5, NULL);
 
     ESP_LOGI(TAG, "Rozpoczecie laczenia się z Wi-Fi...");
     wifi_init_sta();
